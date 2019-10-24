@@ -1,404 +1,171 @@
-import os
-import pickle
-import gc
-import re
-import sys
-import itertools
-import math
-import time
 import subprocess
+import os
+import sys
 
-from optparse import OptionParser
-
-from collections import defaultdict
-from elftools.common.py3compat import maxint, bytes2str
-from elftools.dwarf.descriptions import describe_form_class
-from elftools.elf.elffile import ELFFile
-
-import logging, coloredlogs
-coloredlogs.install(level=logging.DEBUG)
-coloredlogs.install(level=logging.INFO)
-import pprint as pp
-
-def get_size(die):
-    if 'DW_AT_byte_size' in die.attributes:
-      return die.attributes['DW_AT_byte_size'].value
-    else: return None
-
-def get_name(die):
-    if 'DW_AT_name' in die.attributes:
-      return die.attributes['DW_AT_name'].value.decode().replace(" ","")
-    else: None
-
-def get_offset(die):
-    return die.attributes['DW_AT_location'].value
-
-def has_name(die):
-    return 'DW_AT_name' in die.attributes
-
-#def get_sibs(die):
-#    assert ('DW_AT_sibling' in die.attributes)
-#    return die.attributes['DW_AT_sibling']
-
-def get_type(die):
-    assert ('DW_AT_type' in die.attributes)
-    return die.attributes['DW_AT_type'].value
-
-def get_upper(die):
-    assert ('DW_AT_upper_bound' in die.attributes)
-    return die.attributes['DW_AT_upper_bound'].value
-
-def fetch_type(die, type_map, die_list):
-    t_ret = []
-    if 'DW_AT_type' not in die.attributes:
-      return ' '.join(t_ret)
-    t_die = type_map[get_type(die)]
-    tag = t_die.tag
-    name = ""
-
-    if "DW_AT_name" in die.attributes:
-        name = die.attributes['DW_AT_name'].value.decode()
-        if name in die_list:
-            return '_'.join(t_ret)
+def diff_vsa_dwarf(fc,vsa_alocs_list, dwarf_alocs):
+  index = 0
+  print ("%-30s %+8s %+3s %+3s" % ("Func_Name","vsa/dwarf","fit_percent","over_percent"))
+  for vsa_alocs in vsa_alocs_list:
+    print ("Env %s ------------" % index )
+    total_count = 0
+    total_perc = 0
+    dwarf_error =0
+    for fname in vsa_alocs.keys():
+      fit_count = 0
+      over_count = 0
+      if fname not in dwarf_alocs.keys():
+        dwarf_error=dwarf_error+1
+        continue
+      total_count = len(dwarf_alocs[fname])
+      for aloc in vsa_alocs[fname]:
+        if aloc in dwarf_alocs[fname]:
+          fit_count = fit_count + 1
         else:
-          die_list.append(name)
+          over_count = over_count + 1
+      fit_perc = fit_count*100/total_count
+      if len(vsa_alocs[fname]) != 0:
+        over_perc = over_count*100/len(vsa_alocs[fname])
+      else: over_perc = 0
+      total_perc = total_perc + fit_perc
+      div = "%s/%s" % (fit_count,total_count)
+      print ("%-30s %+9s %+10s%% %+11s%%" % (fname,div,fit_perc,over_perc))
+    index = index + 1
+    total_perc = total_perc/len(vsa_alocs)
+    print("Dwarf_parsing_error %s" % (dwarf_error))
+    print("Function : %s/%s" % (len(vsa_alocs),str(fc)))
+    print ("Total Env : %s%%" % (total_perc))
 
-    if tag == 'DW_TAG_base_type':
-        t_ret.append("%s %s" % (get_size(t_die),get_name(t_die)))
-
-    elif tag == 'DW_TAG_const_type':
-        t_ret.append(fetch_type(t_die, type_map,die_list))
-
-    elif tag == 'DW_TAG_enumeration_type':
-        t_ret.append(fetch_type(t_die, type_map, die_list) + 'enum')
-
-    elif tag == 'DW_TAG_pointer_type':
-        ty = fetch_type(t_die, type_map, die_list)
-        if " " in ty: t_ret.append("8 " + ty.split(" ")[1] + '*')
-        else: t_ret.append("8 " + ty + '*')
-
-    elif tag == 'DW_TAG_array_type':
-        t_ret.append(fetch_type(t_die, type_map, die_list))
-        t_die = next(t_die.iter_children())
-        upperbound = get_upper(t_die) + 1
-        t_ret.append('[%d]' % upperbound)
-
-    elif tag == 'DW_TAG_union_type':
-        tmp = []
-        for die in t_die.iter_children():
-            assert(die.tag == 'DW_TAG_member')
-            tmp.append(fetch_type(die, type_map, die_list) + ' ' + get_name(die))
-        t_ret.append('union {%s;}' % ('; '.join(tmp)))
-
-    elif tag == 'DW_TAG_structure_type':
-        tmp = []
-        for die in t_die.iter_children():
-            assert(die.tag == 'DW_TAG_member')
-            if "DW_AT_name" in die.attributes:
-              name = die.attributes['DW_AT_name'].value.decode()
-              die_list.append(name)
-            tmp.append(fetch_type(die, type_map, die_list) + ' ' + get_name(die))
-        t_ret.append('%s %s' % (get_size(t_die), (get_name(t_die))))
-#        t_ret.append('struct {%s;}' % ('; '.join(tmp)))
-
-    elif tag == 'DW_TAG_typedef':
-        tmp = fetch_type(t_die, type_map, die_list)
-        size = tmp.split(" ")[0]
-        if size == "enum" or size == "None":
-          size = 4
-        t_ret.append('%s %s' % (size, get_name(t_die)))
-#        t_ret.append('{typedef %s %s}' % (fetch_type(t_die, type_map, die_list),
-#                                          get_name(t_die), ))
-
-    elif tag == 'DW_TAG_subroutine_type': #TODO
-      return '_'.join(t_ret)
-
-    elif tag == 'DW_TAG_restrict_type': #TODO
-      t_ret.append(fetch_type(t_die, type_map, die_list))
-
-    else:
-        print (die)
-        print (t_die)
-        raise NotImplemented
-
-    #return get_name(t_die) + ' '.join(t_ret)
-    return '_'.join(t_ret)
+def parse_vsa_info(vsa_info):
+  # 4.parse aloc of vsa
+  aloc_list = []
+  fname = "Global"
+  data_list = []
+  offset = ""
+  size = ""
+  alocs = {} # {func : [offs, bit]}
+  alocs["Global"] = []
+  func_num=0
+  for line in vsa_info:
+    new_line = line.strip().split(" ") #Mem,
+    if len(new_line) == "===": #new env
+      aloc_list.append(alocs)
+      alocs = {}
+      fname = ""
+      data_list = []
+      offset = ""
+      size = ""
+    elif len(new_line) == 1:
+      func_num = new_line
+    elif len(new_line) == 2: #global
+      data = new_line[1][1:-1].split(",")
+      fname = data[0]
+      offset = int(data[1][:-1])
+      size = int(data[2])/8
+      data_list.append([offset,size])
+    else: #local
+      data = new_line[2][1:-1].split(",")
+      if data[0][1:-1] != fname: #new function
+        alocs[fname] = data_list
+        data_list = []
+      fname = data[0][1:-1]
+      offset = int(data[2][:-1])
+      size = int(data[3])/8
+      if offset >= 0:
+        pass
+      else:
+        data_list.append([offset,size])
+  alocs[fname] = data_list
+  aloc_list.append(alocs)
+  return func_num,aloc_list
 
 
-def print_die(CU):
-    # Start with the top DIE, the root for this CU's DIE tree
-    top_DIE = CU.get_top_DIE()
-    print('    Top DIE with tag=%s' % top_DIE.tag)
 
-    # We're interested in the filename...
-    print('    name=%s' % top_DIE.get_full_path())
-
-    # Display DIEs recursively starting with top_DIE
-    die_info_rec(top_DIE)
-
-
-def die_info_rec(die, indent_level='    '):
-    """ A recursive function for showing information about a DIE and its
-        children.
-    """
-    if has_name(die):
-        print(indent_level + 'DIE tag=%s, %s' % (die.tag,
-                                                 get_name(die)))
-    else:
-        print(indent_level + 'DIE tag=%s' % (die.tag))
-
-    child_indent = indent_level + '  '
-    for child in die.iter_children():
-        die_info_rec(child, child_indent)
-
-
-def fetch_vars(CU):
-    VARIABLE_TAGS = [
-        'DW_TAG_variable',
-        'DW_TAG_formal_parameter',
-    #    'DW_TAG_constant',
-    ]
-    funcs = {}
-    params = defaultdict(list)
-    local_vars = defaultdict(list)
-    global_vars = []
-    type_map = {}
-    cu_off = CU.cu_offset
-    for die in CU.iter_DIEs():
-        if die.is_null():
-            continue
-        # store type into the dictionary so that it can be fetched easily
-        if 'type' in die.tag:
-            type_map[die.offset-cu_off] = die
-
-        elif die.tag == 'DW_TAG_subprogram':
-            try:
-                func_name = get_name(die)
-                funcs[func_name] = die
-            except:
-                #print (die)
-                import pdb; pdb.set_trace()
-
-        elif die.tag in VARIABLE_TAGS:
-            cur = die
-            parent = None
-            is_local = False
-            while parent is None or \
-                    not parent.tag == 'DW_TAG_compile_unit':
-                parent = cur.get_parent()
-                cur = parent
-                if parent.tag == 'DW_TAG_subprogram':
-                    is_local = True
-                    break
-
-            if is_local:
-                func_name = get_name(parent)
-                if die.tag == 'DW_TAG_formal_parameter':
-                    params[func_name].append(die)
-                elif die.tag == 'DW_TAG_variable':
-                    local_vars[func_name].append(die)
-                else:
-                    # unimplemented
-                    raise NotImplemented
-
-            else:
-                global_vars.append(die)
-    return funcs, params, local_vars, global_vars, type_map
-
-def get_offset(var_name,func_name):
-  cmd = ["/usr/local/bin/llvm-dwarfdump","--name=%s" % func_name, "-c", fname]
-  proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-  proc.wait()
-  lines = proc.stdout.readlines()
-  string = "DW_AT_name\t(\"%s\")\n" % var_name
-  new_lines = []
-  for line in lines:
-    if string in line:
-      new_lines = lines[lines.index(line):]
-      for line in new_lines:
-        if "DW_AT_location" in line:
-          offset = line.split("DW_AT_location")[1]
-          return offset
-
-def print_vars(funcs, params, local_vars, global_vars, type_map):
-    out_str = ''
-    #for var in global_vars:
-        #t = fetch_type(var, type_map)
-        #out_str += '%s %s; \n' % (t, get_name(var))
-    #out_str += '\n'
-
-    for func_name, vars in local_vars.items():
-        func_type = fetch_type(funcs[func_name], type_map, [])
-        if func_type == "" or func_type == "*":
-          func_type = "0 void%s" % func_type
-        out_str += '%s %s' % (func_type,
-                             func_name)
-
-        out_str += ' (...)'
-        out_str += '\n{\n'
-        if func_name in params:
-            for var in params[func_name]:
-                offs = get_offset(get_name(var),func_name)
-                if offs == None: continue
-                t = fetch_type(var, type_map, [])
-                if t == "enum":
-                  t = "4 enum"
-                elif t.split(" ")[1] == "*" or t.split(" ")[1] == "":
-                  t = "%s void%s" % (t.split(" ")[0], t.split(" ")[1])
-                out_str += '  %s %s %s' % (t, get_name(var), offs)
-
-        for var in vars:
-            t = fetch_type(var, type_map, [])
-            offs = get_offset(get_name(var),func_name)
-            if offs == None: continue
-            if t == "enum":
-              t = "4 enum"
-            elif t.split(" ")[1] == "*" or t.split(" ")[1] == "":
-              t = "%s void%s" % (t.split(" ")[0], t.split(" ")[1])
-            out_str += '  %s %s %s' % (t, get_name(var), offs)
-        out_str += '}\n\n'
-
-    for func_name, params in params.items():
-        if func_name in local_vars: continue
-        func_type = fetch_type(funcs[func_name], type_map, [])
-        if func_type == "" or func_type.split == "*":
-          func_type = "0 void%s" % func_type
-        out_str += '%s %s' % (func_type,
-                             func_name)
-        out_str += ' (...)'
-        out_str += '\n{\n'
-        for param in params:
-            t = fetch_type(param, type_map, [])
-            if t == "enum":
-              t = "4 enum"
-            elif t.split(" ")[1] == "*" or t.split(" ")[1] == "":
-              t = "%s void%s" % (t.split(" ")[0], t.split(" ")[1])
-            offs = get_offset(get_name(param),func_name)
-            if offs == None: continue
-            out_str += '  %s %s %s' % (t, get_name(param), offs)
-        out_str += '}\n\n'
-    if out_str == "":
-      return
-    else: print (out_str)
-def decode_file_line(dwarfinfo, path):
-    # DW_TAG_variable
-    # DW_TAG_formal_parameter
-    # DW_TAG_constant
-
-    # - DW_AT_name
-    # - DW_AT_external (False for static and local variables in C/C++)
-    # - DW_AT_declaration
-    # - DW_AT_location
-    # - DW_AT_type
-    # - DW_AT_specification (for C++ structure, class, or union)
-    #       this may have nested DW_TAG_variable
-    # - DW_AT_variable parameter : if parameter can be modified in the callee
-    # - DW_AT_const_value
-    # - DW_AT_endianity
-    # - - DW_END_default
-    # - - DW_END_big
-    # - - DW_END little
-
-    # DW_TAG_base_type
-    # - DW_AT_name
-    # - DW_AT_byte_size or DW_AT_bit_size
-    #
-
-    # Go over all the line programs in the DWARF information, looking for
-    # one that describes the given address.
-
-    ret = {}
-    for CU in dwarfinfo.iter_CUs():
-        #print_die(CU)
-        funcs, params, local_vars, global_vars, type_map = fetch_vars(CU)
-        print_vars(funcs, params, local_vars, global_vars, type_map)
-
-        # TODO: line matching for each instructions and variables
-        # TODO: check C++ class and objects
-
-        lineprog = dwarfinfo.line_program_for_CU(CU)
-        prevstate = None
-        for entry in lineprog.get_entries():
-            #print (entry)
-
-            # We're interested in those entries where a new state is assigned
-            if entry.state is None or entry.state.end_sequence:
-                continue
-            # Looking for a range of addresses in two consecutive states that
-            # contain the required address.
-            # if addrs is given, check address is in the given addrs
-            if prevstate:# and prevstate.address in target_addrs_by_path[path]:
-                try:
-                    fname = lineprog['file_entry'][prevstate.file - 1].name
-                except:
-                    #fname = 'unknown'
-                    continue
-
-                if isinstance(fname, bytes):
-                    fname = fname.decode()
-
-                line = prevstate.line
-                ret[prevstate.address] = (fname, line)
-
-            prevstate = entry.state
-
-    return ret
+def parse_dwarf_info(dwarf_info):
+  # 3.make aloc of get_dwarf (offset-16)
+  # var = DW_OP_fbreg | DW_OP_addr | ...
+  fname = ""
+  data = []
+  offset = ""
+  size = ""
+  alocs = {} # {func : [offs, bit]}
+  alocs["Global"] = []
+  for line in dwarf_info:
+    if line == "\n": continue
+    elif "(...)" in line: fname = line.split(" ")[2]
+    elif ("{" in line): continue
+    elif ("}" in line):
+      if data == []:
+        continue
+      else:
+        alocs[fname] = data
+      data = []
+      offset = ""
+      size = ""
+      fname = ""
+    else: #TODO : List variable recovery
+      size = int(line.strip().split(" ")[0])
+      offset = line.strip().split("(")[1]
+      if "DW_OP_fbreg" in offset:
+        offset = int( offset.split(" ")[1][:-1])+16
+        data.append([offset,size])
+      elif "DW_OP_addr" in offset:
+        offset = int(offset.split(" ")[1][:-1],16)
+        alocs["Global"].append([offset,size])
+      elif ")" not in offset: pass
+      else: data.append([offset,size])
+  return alocs
 
 
-def get_file_line(fname):
-    addr_to_line = {}
-    with open(fname, 'rb') as f:
-        elffile = ELFFile(f)
-        if not elffile.has_dwarf_info():
-            print ('No Dwarf Found in ', fname)
+def get_vsa_info(elf_path):
+  # 2.save vsa
+  pwd = os.getcwd()
+  vsa_path = "%s/%s.vsa" % (pwd, elf_path)
+  if os.path.isfile(vsa_path) == False:
+    f = open(vsa_path,"a")
+    cmd = ["/usr/bin/dotnet", "run", elf_path]
+    proc = subprocess.Popen(cmd, stdout = f)
+    proc.wait()
+    f.close()
+  f = open(vsa_path,"r")
+  lines = f.readlines()
+  f.close()
 
-        else:
-            dwarf = elffile.get_dwarf_info()
-            addr_to_line = decode_file_line(dwarf, fname)
-            exit()
+  return lines
 
-    return addr_to_line
+def get_dwarf_info(elf_path):
+  # 1.save the result of get_dwarf
+  pwd = os.getcwd()
+  dwarf_path = "%s/%s.dwarf"  % (pwd,elf_path)
+  if os.path.isfile(dwarf_path) == False:
+    f = open(dwarf_path,"a")
+    cmd = ["/usr/bin/python", "get_dwarf_info.py", elf_path]
+    proc = subprocess.Popen(cmd, stdout = f)
+    proc.wait()
+    f.close()
+  f = open(dwarf_path,"r")
+  lines = f.readlines()
+  f.close()
 
+  return lines
 
-def debug_extract_helper(path):
-    # use cache ...
-    addr_to_line = {}
-    addr_to_line = get_file_line(path)
-    with open(debug_fname, 'wb') as f:
-        pickle.dump(addr_to_line, f)
-
-    res = []
-    for addr in addr_to_line.keys():
-        fname, line = addr_to_line[addr]
-        if os.path.basename(fname) not in filelist:
-            continue
-
-        res.append((path_idx, addr, fname, line))
-
-    del addr_to_line
-    return res
-
-
-def get_debug_info(path_indices, addrs_by_path, paths, filelist):
-
-    return debug_info
-
+def evaluate_helper():
+  elf_path = sys.argv[1]
+  print("1.save dwarf info")
+  dwarf_info = get_dwarf_info(elf_path)
+  print("2.save vsa info")
+  vsa_info = get_vsa_info(elf_path)
+  print("3.parse dwarf info")
+  dwarf_aloc = parse_dwarf_info(dwarf_info)
+  print("4.parse vsa info")
+  fc,vsa_aloc = parse_vsa_info(vsa_info)
+  print("5.diff vsa & dwarf")
+  print("------------------")
+  result = diff_vsa_dwarf(fc,vsa_aloc, dwarf_aloc)
 
 if __name__ == '__main__':
-#    op = OptionParser()
-#    op.add_option("--db_name",
-#                  action="store", dest="db_name",
-#                  help="name of target database")
-#    op.add_option("--col_prefix",
-#                  action="store", dest="col_prefix",
-#                  help="prefix of target collection, accepts regular expression. (ex) musl.*")
-#    op.add_option("--filelist_dir",
-#                  action="store", dest="filelist_dir",
-#                  help="name of the filelist directory")
-#
-#    (opts, args) = op.parse_args()
-    global fname
-    fname = sys.argv[1]
-    debug_extract_helper(fname)
-
-
+  # 1.save the result of get_dwarf
+  # 2.save vsa
+  # 3.make aloc of get_dwarf (offset-16)
+  # 4.parse aloc of vsa
+  # 5.diff
+  evaluate_helper()
