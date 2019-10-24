@@ -1,0 +1,48 @@
+1.save dwarf info
+2.save vsa info
+3.parse dwarf info
+4.parse vsa info
+5.diff vsa & dwarf
+------------------
+Func_Name                      vsa/dwarf fit_percent over_percent
+Env 0 ------------
+rpl_mbrtowc                          5/7         71%           0%
+xnmalloc                             2/2        100%           0%
+initialize_ordering_vector           1/1        100%           0%
+mbsnwidth                           9/11         81%           0%
+clear_files                          2/2        100%           0%
+print_dir                           8/12         66%          11%
+argmatch                             8/8        100%           0%
+is_ENOTSUP                           1/1        100%           0%
+is_directory                         1/1        100%           0%
+decode_switches                     8/24         33%          27%
+errno_unsupported                    1/1        100%           0%
+tzalloc                              4/4        100%           0%
+free_ent                             1/1        100%           0%
+gobble_file                        14/32         43%           6%
+gnu_mbswidth                         2/2        100%           0%
+initialize_exit_failure              1/1        100%           0%
+_getopt_initialize                   5/5        100%           0%
+quotearg_buffer_restyled           16/32         50%          11%
+main                                 5/8         62%           0%
+queue_directory                      4/4        100%           0%
+set_program_name                     3/3        100%           0%
+human_readable                     17/34         50%           0%
+lgetfilecon                          2/2        100%           0%
+_getopt_internal_r                  7/12         58%          22%
+extract_dirs_from_files              6/8         75%          14%
+getenv_quoting_style                 2/2        100%          60%
+rpl_getopt_internal                  7/8         87%          22%
+quote_name_buf                     12/24         50%           7%
+xmemdup                              2/2        100%           0%
+rpl_getopt_long                      5/5        100%          16%
+getfilecon_cache                     4/4        100%           0%
+set_quoting_style                    2/2        100%           0%
+quote_name                         10/20         50%           0%
+get_quoting_style                    1/1        100%           0%
+Global                              2/20         10%          98%
+quotearg_buffer                      8/8        100%          20%
+xmalloc                              2/2        100%           0%
+free_pending_ent                     1/1        100%           0%
+Function : 38/418
+Total Env : 83%
