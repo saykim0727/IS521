@@ -252,12 +252,13 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
         out_str += '\n{\n'
         if func_name in params:
             for var in params[func_name]:
-                if var in varset:
-                  varset[var] = varset[var] + 1
-                  count = varset[var]
+                name = get_name(var)
+                if name in varset:
+                  varset[name] = varset[name] + 1
+                  count = varset[name]
                 else:
-                   varset[var] = 0
-                   count = varset[var]
+                   varset[name] = 0
+                   count = varset[name]
                 offs = get_offset(get_name(var),func_name, count)
                 if offs == None: continue
                 t = fetch_type(var, type_map, [])
@@ -269,12 +270,13 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
 
         for var in vars:
             t = fetch_type(var, type_map, [])
-            if var in varset:
-              varset[var] = varset[var] + 1
-              count = varset[var]
+            name = get_name(var)
+            if name in varset:
+              varset[name] = varset[name] + 1
+              count = varset[name]
             else:
-               varset[var] = 0
-               count = varset[var]
+               varset[name] = 0
+               count = varset[name]
             offs = get_offset(get_name(var),func_name,count)
             if offs == None: continue
             if t == "enum":
@@ -294,12 +296,13 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
         out_str += ' (...)'
         out_str += '\n{\n'
         for param in params:
-            if param in varset:
-              varset[param] = varset[param] + 1
-              count = varset[param]
+            name = get_name(param)
+            if name in varset:
+              varset[name] = varset[name] + 1
+              count = varset[name]
             else:
-               varset[param] = 0
-               count = varset[param]
+               varset[name] = 0
+               count = varset[name]
             t = fetch_type(param, type_map, [])
             if t == "enum":
               t = "4 enum"

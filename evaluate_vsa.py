@@ -5,6 +5,8 @@ import pickle
 
 def diff_vsa_dwarf(fc,vsa_alocs_list, dwarf_alocs, ida_alocs):
   index = 0
+  print (dwarf_alocs["abformat_init"])
+  print (ida_alocs["abformat_init"])
   print ("%-30s %+8s %+3s %+3s" % ("Func_Name","vsa/dwarf","fit_percent","over_percent"))
   for vsa_alocs in vsa_alocs_list:
     print ("Env %s ------------" % index )
@@ -134,7 +136,7 @@ def parse_dwarf_info(dwarf_info):
     else: #TODO : List variable recovery
       size = int(line.strip().split(" ")[0])
       offset = line.strip().split("(")[1]
-      if "_[" in line:
+      if "_[" in line:  #to show our parser is good
         num = int(line.strip().split("_[")[1].split("]")[0])
         size = size * num
       if "DW_OP_fbreg" in offset:
