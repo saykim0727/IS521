@@ -1,39 +1,69 @@
 import subprocess
 import os
 import sys
+import pickle
 
-def diff_vsa_dwarf(fc,vsa_alocs_list, dwarf_alocs):
+def diff_vsa_dwarf(fc,vsa_alocs_list, dwarf_alocs, ida_alocs):
   index = 0
   print ("%-30s %+8s %+3s %+3s" % ("Func_Name","vsa/dwarf","fit_percent","over_percent"))
   for vsa_alocs in vsa_alocs_list:
     print ("Env %s ------------" % index )
+    ida_total_count = 0
+    ida_total_perc = 0
+    ida_total_over = 0
     total_count = 0
     total_perc = 0
-    dwarf_error =0
+    dwarf_error = 0
+    total_over = 0
     for fname in vsa_alocs.keys():
       fit_count = 0
       over_count = 0
+      ida_fit_count = 0
+      ida_over_count = 0
       if fname not in dwarf_alocs.keys():
         dwarf_error=dwarf_error+1
         continue
       total_count = len(dwarf_alocs[fname])
+
       for aloc in vsa_alocs[fname]:
         if aloc in dwarf_alocs[fname]:
           fit_count = fit_count + 1
         else:
           over_count = over_count + 1
-      fit_perc = fit_count*100/total_count
+
+      if fname != "Global":
+        for aloc in ida_alocs[fname]:
+          if aloc in dwarf_alocs[fname]:
+            ida_fit_count = ida_fit_count + 1
+          else:
+            ida_over_count = ida_over_count + 1
+
+      if total_count != 0:
+        fit_perc = fit_count*100/total_count
+        ida_fit_perc = ida_fit_count*100/total_count
       if len(vsa_alocs[fname]) != 0:
         over_perc = over_count*100/len(vsa_alocs[fname])
       else: over_perc = 0
+      if fname != "Global":
+        if len(ida_alocs[fname]) != 0:
+          ida_over_perc = ida_over_count*100/len(ida_alocs[fname])
+        else: ida_over_perc = 0
       total_perc = total_perc + fit_perc
+      total_over = total_over + over_perc
       div = "%s/%s" % (fit_count,total_count)
-      print ("%-30s %+9s %+10s%% %+11s%%" % (fname,div,fit_perc,over_perc))
+      ida_total_perc = ida_total_perc + ida_fit_perc
+      ida_total_over = ida_total_over + ida_over_perc
+      ida_div = "%s/%s" % (ida_fit_count,total_count)
+      print ("%-30s %+9s %+10s%% %+11s%% %+9s %+10s%% %+11s%%" % (fname,div,fit_perc,over_perc,ida_div,ida_fit_perc,ida_over_perc))
     index = index + 1
     total_perc = total_perc/len(vsa_alocs)
+    total_over = total_over/len(vsa_alocs)
+    ida_total_perc = ida_total_perc/len(vsa_alocs)
+    ida_total_over = ida_total_over/len(vsa_alocs)
     print("Dwarf_parsing_error %s" % (dwarf_error))
-    print("Function : %s/%s" % (len(vsa_alocs),str(fc)))
-    print ("Total Env : %s%%" % (total_perc))
+    print("Function : %s/%d" % (len(vsa_alocs),int(fc)))
+    print ("Total Env : %s%% %s%%" % (total_perc, total_over))
+    print ("Total ida : %s%% %s%%" % (ida_total_perc, ida_total_over))
 
 def parse_vsa_info(vsa_info):
   # 4.parse aloc of vsa
@@ -55,7 +85,7 @@ def parse_vsa_info(vsa_info):
       offset = ""
       size = ""
     elif len(new_line) == 1:
-      func_num = new_line
+      func_num = int(line.strip())
     elif len(new_line) == 2: #global
       data = new_line[1][1:-1].split(",")
       fname = data[0]
@@ -77,7 +107,6 @@ def parse_vsa_info(vsa_info):
   alocs[fname] = data_list
   aloc_list.append(alocs)
   return func_num,aloc_list
-
 
 
 def parse_dwarf_info(dwarf_info):
@@ -105,8 +134,11 @@ def parse_dwarf_info(dwarf_info):
     else: #TODO : List variable recovery
       size = int(line.strip().split(" ")[0])
       offset = line.strip().split("(")[1]
+      if "_[" in line:
+        num = int(line.strip().split("_[")[1].split("]")[0])
+        size = size * num
       if "DW_OP_fbreg" in offset:
-        offset = int( offset.split(" ")[1][:-1])+16
+        offset = int(offset.split(" ")[1][:-1])+16
         data.append([offset,size])
       elif "DW_OP_addr" in offset:
         offset = int(offset.split(" ")[1][:-1],16)
@@ -115,6 +147,21 @@ def parse_dwarf_info(dwarf_info):
       else: data.append([offset,size])
   return alocs
 
+
+def get_ida_info(elf_path):
+  pwd = os.getcwd()
+  ida_path = "%s/%s.ida" % (pwd, elf_path)
+  if os.path.isfile(ida_path) == False:
+    f = open(ida_path,"w")
+    script = "-S\"%s/ida_script.py\" %s" % (pwd, ida_path)
+    cmd = ["/home/kim/ida-6.95/idaq64", "-A", script , elf_path, "-t"]
+    proc = subprocess.Popen(cmd, stdout = f)
+    proc.wait()
+    f.close()
+  f = open(ida_path,"r")
+  alocs = pickle.load(f)
+  f.close()
+  return alocs
 
 def get_vsa_info(elf_path):
   # 2.save vsa
@@ -159,8 +206,10 @@ def evaluate_helper():
   print("4.parse vsa info")
   fc,vsa_aloc = parse_vsa_info(vsa_info)
   print("5.diff vsa & dwarf")
+  ida_aloc = get_ida_info(elf_path)
+  print("6.diff vsa & dwarf")
   print("------------------")
-  result = diff_vsa_dwarf(fc,vsa_aloc, dwarf_aloc)
+  result = diff_vsa_dwarf(fc,vsa_aloc, dwarf_aloc, ida_aloc)
 
 if __name__ == '__main__':
   # 1.save the result of get_dwarf

@@ -205,20 +205,33 @@ def fetch_vars(CU):
                 global_vars.append(die)
     return funcs, params, local_vars, global_vars, type_map
 
-def get_offset(var_name,func_name):
+def get_location(lines, string, count):
+  new_lines = []
+  for line in lines:
+    if string in line:
+      new_lines = lines[lines.index(line):]
+      break
+  for line in new_lines:
+    if "DW_TAG" in line:
+      new_lines = lines[lines.index(line):]
+      return get_location(new_lines,string, count)
+    elif "DW_AT_location" in line:
+      offset = line.split("DW_AT_location")[1]
+      if count == 0:
+        return offset
+      else:
+        count = count -1
+        new_lines = lines[lines.index(line):]
+        return get_location(new_lines,string, count)
+
+def get_offset(var_name,func_name, count):
   cmd = ["/usr/local/bin/llvm-dwarfdump","--name=%s" % func_name, "-c", fname]
   proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
   proc.wait()
   lines = proc.stdout.readlines()
   string = "DW_AT_name\t(\"%s\")\n" % var_name
-  new_lines = []
-  for line in lines:
-    if string in line:
-      new_lines = lines[lines.index(line):]
-      for line in new_lines:
-        if "DW_AT_location" in line:
-          offset = line.split("DW_AT_location")[1]
-          return offset
+  off = get_location(lines, string, count)
+  return off
 
 def print_vars(funcs, params, local_vars, global_vars, type_map):
     out_str = ''
@@ -226,8 +239,9 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
         #t = fetch_type(var, type_map)
         #out_str += '%s %s; \n' % (t, get_name(var))
     #out_str += '\n'
-
     for func_name, vars in local_vars.items():
+        varset = {}
+        count = 0
         func_type = fetch_type(funcs[func_name], type_map, [])
         if func_type == "" or func_type == "*":
           func_type = "0 void%s" % func_type
@@ -238,7 +252,13 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
         out_str += '\n{\n'
         if func_name in params:
             for var in params[func_name]:
-                offs = get_offset(get_name(var),func_name)
+                if var in varset:
+                  varset[var] = varset[var] + 1
+                  count = varset[var]
+                else:
+                   varset[var] = 0
+                   count = varset[var]
+                offs = get_offset(get_name(var),func_name, count)
                 if offs == None: continue
                 t = fetch_type(var, type_map, [])
                 if t == "enum":
@@ -249,7 +269,13 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
 
         for var in vars:
             t = fetch_type(var, type_map, [])
-            offs = get_offset(get_name(var),func_name)
+            if var in varset:
+              varset[var] = varset[var] + 1
+              count = varset[var]
+            else:
+               varset[var] = 0
+               count = varset[var]
+            offs = get_offset(get_name(var),func_name,count)
             if offs == None: continue
             if t == "enum":
               t = "4 enum"
@@ -257,8 +283,8 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
               t = "%s void%s" % (t.split(" ")[0], t.split(" ")[1])
             out_str += '  %s %s %s' % (t, get_name(var), offs)
         out_str += '}\n\n'
-
     for func_name, params in params.items():
+        varset = {}
         if func_name in local_vars: continue
         func_type = fetch_type(funcs[func_name], type_map, [])
         if func_type == "" or func_type.split == "*":
@@ -268,12 +294,18 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
         out_str += ' (...)'
         out_str += '\n{\n'
         for param in params:
+            if param in varset:
+              varset[param] = varset[param] + 1
+              count = varset[param]
+            else:
+               varset[param] = 0
+               count = varset[param]
             t = fetch_type(param, type_map, [])
             if t == "enum":
               t = "4 enum"
             elif t.split(" ")[1] == "*" or t.split(" ")[1] == "":
               t = "%s void%s" % (t.split(" ")[0], t.split(" ")[1])
-            offs = get_offset(get_name(param),func_name)
+            offs = get_offset(get_name(param),func_name, count)
             if offs == None: continue
             out_str += '  %s %s %s' % (t, get_name(param), offs)
         out_str += '}\n\n'
