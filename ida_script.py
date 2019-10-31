@@ -15,7 +15,7 @@ def find_stack_members(func_ea):
             if member_name == ' s':
                 base = member_offset
         if not base:
-            raise ValueError("Failed identifying the stack's base address using the return address hidden stack member")
+          base = 3
     except:
         return 0, 0
     return members, base
@@ -37,12 +37,13 @@ def find_stack_xrefs(func_offset, fName):
     return datas
 
 if __name__ == "__main__":
+    autoWait()
     ea = BeginEA()
     alocs = {}
     for funcAddr in Functions(SegStart(ea), SegEnd(ea)):
         funcName = GetFunctionName(funcAddr)
         datas = find_stack_xrefs(funcAddr, funcName)
-        if alocs ==0: print("error")
+        if datas ==0: print("error")
         else: alocs[funcName] = datas
     f = open(idc.ARGV[1],"w")
     pickle.dump(alocs,f)

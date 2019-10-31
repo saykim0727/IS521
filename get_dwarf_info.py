@@ -88,7 +88,7 @@ def fetch_type(die, type_map, die_list):
         for die in t_die.iter_children():
             assert(die.tag == 'DW_TAG_member')
             tmp.append(fetch_type(die, type_map, die_list) + ' ' + get_name(die))
-        t_ret.append('union {%s;}' % ('; '.join(tmp)))
+        t_ret.append('8 {%s;}' % ('; '.join(tmp)))
 
     elif tag == 'DW_TAG_structure_type':
         tmp = []
@@ -115,7 +115,8 @@ def fetch_type(die, type_map, die_list):
 
     elif tag == 'DW_TAG_restrict_type': #TODO
       t_ret.append(fetch_type(t_die, type_map, die_list))
-
+    elif tag ==  'DW_TAG_volatile_type':
+      t_ret.append(fetch_type(t_die, type_map, die_list))
     else:
         print (die)
         print (t_die)
@@ -226,9 +227,12 @@ def get_location(lines, string, count):
 
 def get_offset(var_name,func_name, count):
   cmd = ["/usr/local/bin/llvm-dwarfdump","--name=%s" % func_name, "-c", fname]
-  proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+  f = open("/tmp/a","w")
+  proc = subprocess.Popen(cmd, stdout=f)
   proc.wait()
-  lines = proc.stdout.readlines()
+  f.close()
+  f = open("/tmp/a","r")
+  lines = f.readlines()
   string = "DW_AT_name\t(\"%s\")\n" % var_name
   off = get_location(lines, string, count)
   return off
@@ -262,7 +266,9 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
                 offs = get_offset(get_name(var),func_name, count)
                 if offs == None: continue
                 t = fetch_type(var, type_map, [])
-                if t == "enum":
+                if t =="":
+                  continue
+                elif t == "enum":
                   t = "4 enum"
                 elif t.split(" ")[1] == "*" or t.split(" ")[1] == "":
                   t = "%s void%s" % (t.split(" ")[0], t.split(" ")[1])
@@ -279,7 +285,8 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
                count = varset[name]
             offs = get_offset(get_name(var),func_name,count)
             if offs == None: continue
-            if t == "enum":
+            if t =="": continue
+            elif t == "enum":
               t = "4 enum"
             elif t.split(" ")[1] == "*" or t.split(" ")[1] == "":
               t = "%s void%s" % (t.split(" ")[0], t.split(" ")[1])
@@ -304,7 +311,8 @@ def print_vars(funcs, params, local_vars, global_vars, type_map):
                varset[name] = 0
                count = varset[name]
             t = fetch_type(param, type_map, [])
-            if t == "enum":
+            if t =="": continue
+            elif t == "enum":
               t = "4 enum"
             elif t.split(" ")[1] == "*" or t.split(" ")[1] == "":
               t = "%s void%s" % (t.split(" ")[0], t.split(" ")[1])
